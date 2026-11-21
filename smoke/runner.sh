@@ -32,11 +32,28 @@ mkdir -p "$work/prep/home" "$work/prep/project/supabase"
 tar -xzf "$work/supabase.tgz" -C "$work/prep" --no-same-owner supabase
 cp "$root/config.toml" "$work/prep/project/supabase/config.toml"
 cp "$root/container.sh" "$work/prep/"
+phase='disposable runtime identity'
+# A numeric Docker user may not resolve via the image passwd database. Read
+# only the pinned image's public account file, never the host's. No network,
+# writable root, project bind, daemon socket, or credentials in this probe.
+uid="$(id -u)"
+gid="$(id -g)"
+[[ "$uid" =~ ^[1-9][0-9]*$ && "$gid" =~ ^[0-9]+$ ]]
+identity=()
+base=(--rm --init --pull never --platform linux/amd64 --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 --user "$uid:$gid" --env HOME=/qa/home --env SUPABASE_TELEMETRY_DISABLED=true)
+docker run "${base[@]}" --network none --read-only --entrypoint /bin/cat "$image" /etc/passwd >"$work/image.passwd"
+# Preserve the image's complete account table and add only a missing runner
+# identity. A duplicate/malformed identity fails closed.
+match_count="$(awk -F: -v uid="$uid" 'NF != 7 { bad=1 } $3 == uid { count++ } END { if (bad || count > 1 || NR == 0) exit 1; print count+0 }' "$work/image.passwd")"
+if [[ "$match_count" == 0 ]]; then
+  ! grep -q '^geniefixture:' "$work/image.passwd"
+  printf 'geniefixture:x:%s:%s:Synthetic CI identity:/qa/home:/usr/sbin/nologin\n' "$uid" "$gid" >>"$work/image.passwd"
+  identity=(--mount "type=bind,src=$work/image.passwd,dst=/etc/passwd,readonly")
+fi
 phase='official native service preload'
 # This first container can reach official artifact hosts, but has only pinned
 # CLI, a generated local config, and no SQL, Edge fixture or app data mounted.
-base=(--rm --init --pull never --platform linux/amd64 --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 --user "$(id -u):$(id -g)" --env HOME=/qa/home --env SUPABASE_TELEMETRY_DISABLED=true)
-docker run "${base[@]}" --network bridge --mount "type=bind,src=$work/prep,dst=/qa" "$image" bash /qa/container.sh prepare
+docker run "${base[@]}" "${identity[@]}" --network bridge --mount "type=bind,src=$work/prep,dst=/qa" "$image" bash /qa/container.sh prepare
 phase='assemble synthetic-only offline payload'
 mkdir -p "$work/prep/project/supabase/migrations"
 install -m 600 "$work/schema.sql" "$work/prep/project/supabase/migrations/20261115000000_genie.sql"
@@ -45,5 +62,5 @@ cp "$root/edge/"{index.ts,fixture.mjs} "$work/prep/project/supabase/functions/vs
 cp "$root/"{verify-loopback.mjs,status-guard.mjs} "$work/prep/"
 phase='actual offline stack and smoke'
 # No port forward, host networking, Docker socket, project checkout or token.
-docker run "${base[@]}" --network none --mount "type=bind,src=$work/prep,dst=/qa" "$image" bash /qa/container.sh smoke
+docker run "${base[@]}" "${identity[@]}" --network none --mount "type=bind,src=$work/prep,dst=/qa" "$image" bash /qa/container.sh smoke
 echo 'PASS: real disposable Supabase smoke passed inside an offline test container.'
