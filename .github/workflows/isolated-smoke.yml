@@ -1,0 +1,36 @@
+name: Genie synthetic backend smoke
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type GENIE_ISOLATED_ONCE for the approved single synthetic run'
+        required: true
+        type: string
+permissions: {}
+jobs:
+  synthetic:
+    # The local template binds nothing. Only bind after reviewing the real repo.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository_id == '1466889007' &&
+      github.repository == 'jmpark0611-art/genie-isolated-qa' &&
+      github.event.repository.fork == false &&
+      github.event.repository.private == false &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 &&
+      inputs.confirm == 'GENIE_ISOLATED_ONCE'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact dispatch SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 1
+      - name: Prepare official software, then run without a network
+        shell: bash
+        run: bash smoke/runner.sh

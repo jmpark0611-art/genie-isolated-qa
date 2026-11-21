@@ -1,0 +1,27 @@
+project_id = "genie-synthetic-ci-once"
+
+[experimental]
+stack = true
+
+[api]
+enabled = true
+port = 55321
+
+[db]
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:55321"
+enable_signup = true
+enable_anonymous_sign_ins = true
+jwt_secret = "env(GENIE_CI_FRESH_JWT)"
+
+[edge_runtime]
+enabled = true
+
+[functions.vs-decide]
+verify_jwt = false
