@@ -71,9 +71,57 @@ stage=run-auth-rest-rls
 # Only pass the local public JWT to the smoke. Keep key files out of logs.
 node --input-type=module -e '
   import fs from "node:fs"; import {spawnSync} from "node:child_process";
+function classify(run) {
+  if (run.error?.code === "ETIMEDOUT") return "subprocess-timeout";
+  if (run.error) return "subprocess-launch";
+  if (run.signal) return "subprocess-signal";
+  const stderr = typeof run.stderr === "string" ? run.stderr : "";
+  const rules = [
+    [/^Anonymous Auth HTTP ([1-5][0-9]{2})$/, "anonymous-auth"],
+    [/^Distinct anonymous users required$/, "distinct-anonymous-users"],
+    [/^Deterministic local Edge HTTP (400) (SYNTHETIC_INPUT_REQUIRED)$/, "local-edge"],
+    [/^Deterministic local Edge HTTP (401) (AUTH_REQUIRED|ANONYMOUS_FIXTURE_USER_REQUIRED)$/, "local-edge"],
+    [/^Deterministic local Edge HTTP (404) (NOT_FOUND)$/, "local-edge"],
+    [/^Deterministic local Edge HTTP (405) (METHOD_NOT_ALLOWED)$/, "local-edge"],
+    [/^Deterministic local Edge HTTP (502) (LOCAL_AUTH_UNAVAILABLE|LOCAL_CLAIM_FAILED|LOCAL_WRITE_FAILED|LOCAL_SAVE_INVALID|LOCAL_BACKEND_UNAVAILABLE)$/, "local-edge"],
+    [/^Deterministic local Edge HTTP ([1-5][0-9]{2})$/, "local-edge"],
+    [/^Expected synthetic decision UUID$/, "synthetic-decision"],
+    [/^Owner result mismatch$/, "owner-result"],
+    [/^PostgREST owner visibility HTTP ([1-5][0-9]{2})$/, "postgrest-visibility"],
+    [/^Direct table reads not isolated$/, "read-isolation"],
+    [/^Direct voter write allowed$/, "write-denial"],
+    [/^Foreign owner RPC allowed$/, "foreign-owner-rpc-denial"],
+    [/^(my_poll|share|shared_poll|vote) HTTP ([1-5][0-9]{2})$/, "poll-rpc"],
+    [/^Share was invalid or not idempotent$/, "share-idempotency"],
+    [/^Unexpected private fields before vote$/, "pre-vote-privacy"],
+    [/^Owner vote was allowed$/, "owner-vote-denial"],
+    [/^Vote not idempotent or tally differs$/, "vote-and-tally"],
+    [/^Owner choice did not persist$/, "owner-choice"],
+    [/^Foreign delete RPC should be a no-op$|^Voter removed owner record$/, "foreign-delete-denial"],
+    [/^Owner delete unsuccessful$|^Deleted record or invitation remained accessible$/, "owner-delete"],
+    [/^fetch failed$|^The operation was aborted due to timeout$/, "local-request-transport"],
+  ];
+  for (const line of stderr.split(/\r?\n/)) {
+    for (const [pattern, name] of rules) {
+      const m = pattern.exec(line);
+      if (m) {
+        if (name === "local-edge" && m[2]) return name + "-http-" + m[1] + "-" + m[2].toLowerCase().replaceAll("_", "-");
+        if (name === "poll-rpc") return name + "-" + m[1] + "-http-" + m[2];
+        return m[1] ? name + "-http-" + m[1] : name;
+      }
+    }
+  }
+  return "no-pass-evidence";
+}
   const status=JSON.parse(fs.readFileSync("/qa/local-keys.json","utf8"));
   const run=spawnSync(process.execPath,["/qa/verify-loopback.mjs","--run"],{encoding:"utf8",timeout:150000,
     env:{GENIE_CONFIRM:"isolated-genie-synthetic-only",GENIE_SUPABASE_URL:"http://127.0.0.1:55321",GENIE_SUPABASE_PUBLIC_KEY:status.anon}});
-  if(run.status!==0 || !run.stdout.includes("PASS: local Auth, Edge, PostgREST"))process.exit(1);
+  if(run.status!==0 || typeof run.stdout !== "string" || !run.stdout.includes("PASS: local Auth, Edge, PostgREST")) {
+    // Do not print raw subprocess output. Accept only finite diagnostic
+    // names and a three-digit HTTP code from the existing local harness.
+    const detail = classify(run);
+    process.stderr.write("DETAIL: synthetic functional check " + detail + ".\n");
+    process.exit(1);
+  }
   process.stdout.write("Verified local Auth, PostgREST owner isolation, voting, tally and single-record deletion.\n");
 '

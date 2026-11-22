@@ -22,6 +22,32 @@ function transport(key,send=fetch){
   };
 }
 function must(ok,label){if(!ok)throw Error(label);}
+// Read at most 512 bytes from the one deterministic synthetic response.
+async function edgeFailure(r){
+  const prefix='Deterministic local Edge HTTP '+r.status;
+  if(!(r.headers.get('content-type')??'').startsWith('application/json')||!r.body) return prefix;
+  const allowed={
+    400:['SYNTHETIC_INPUT_REQUIRED'],
+    401:['AUTH_REQUIRED','ANONYMOUS_FIXTURE_USER_REQUIRED'],
+    404:['NOT_FOUND'],
+    405:['METHOD_NOT_ALLOWED'],
+    502:['LOCAL_AUTH_UNAVAILABLE','LOCAL_CLAIM_FAILED','LOCAL_WRITE_FAILED','LOCAL_SAVE_INVALID','LOCAL_BACKEND_UNAVAILABLE'],
+  };
+  if(!Object.hasOwn(allowed,r.status))return prefix;
+  const reader=r.body.getReader(), data=new Uint8Array(512);
+  let size=0;
+  try{
+    for(;;){
+      const {value,done}=await reader.read();
+      if(done)break;
+      if(size+value.byteLength>data.length)return prefix;
+      data.set(value,size);size+=value.byteLength;
+    }
+    const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data.subarray(0,size)));
+    return allowed[r.status].includes(body?.error)?prefix+' '+body.error:prefix;
+  }catch{return prefix;}
+  finally{void reader.cancel().catch(()=>{});}
+}
 async function real(key){
   const req=transport(key);
   const json=async(r,label)=>{must(r.ok,label+' HTTP '+r.status);return r.json();};
@@ -38,7 +64,9 @@ async function real(key){
   const read=async(name,body,t)=>json(await rpc(name,body,t),name);
   let id,removed=false;
   try{
-    const d=await json(await req('POST','/functions/v1/vs-decide',{a:marker+' A',b:marker+' B',note:''},o),'Deterministic local Edge');
+    const edge=await req('POST','/functions/v1/vs-decide',{a:marker+' A',b:marker+' B',note:''},o);
+    if(!edge.ok)throw Error(await edgeFailure(edge));
+    const d=await edge.json();
     must(d.kind==='pick'&&/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(d.id??''),'Expected synthetic decision UUID');
     id=d.id;const p={p_id:id},table='/rest/v1/vs_polls?select=id,did&id=eq.'+id;
     const own=await read('my_poll',p,o);

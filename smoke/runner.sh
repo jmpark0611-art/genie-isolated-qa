@@ -26,7 +26,7 @@ curl "${cf[@]}" "$cliUrl" -o "$work/supabase.tgz"
 printf '%s  %s\n' '3e54b98e5ead7be0a3b0753526833d4cc9a55304e4d57da0d72f1efc342738ea' "$work/supabase.tgz" | sha256sum --check --status
 curl "${cf[@]}" "$sqlUrl" -o "$work/schema.sql"
 printf '%s  %s\n' 'a11c228c811cf8f04030a6507755863a4a3c6a771f86caa5268db59c77a136f1' "$work/schema.sql" | sha256sum --check --status
-[[ "$(sha256sum "$root/verify-loopback.mjs" | cut -d' ' -f1)" == 18914a0d609d7520c924f8955e464f8b035090dfa7edaf3f667dfb131b600b1d ]]
+[[ "$(sha256sum "$root/verify-loopback.mjs" | cut -d' ' -f1)" == 3aeeb506e58a72093dfc9b7782ec7aca4542c899ac5be89e61c9952bc818639e ]]
 [[ "$(sha256sum "$root/edge/fixture.mjs" | cut -d' ' -f1)" == 47aa80573c6d8c8c51ae95d9af379b2806765d1d31d2035c25ba3089677dce1a ]]
 mkdir -p "$work/prep/home" "$work/prep/project/supabase"
 tar -xzf "$work/supabase.tgz" -C "$work/prep" --no-same-owner supabase
